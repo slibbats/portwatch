@@ -69,3 +69,19 @@ func (n *Notifier) NotifyNew(listeners []portscanner.Listener) error {
 	}
 	return nil
 }
+
+// NotifyGone emits an INFO alert for each listener that has disappeared.
+func (n *Notifier) NotifyGone(listeners []portscanner.Listener) error {
+	for _, l := range listeners {
+		a := Alert{
+			Timestamp: time.Now(),
+			Severity:  SeverityInfo,
+			Message:   "listener no longer active",
+			Listener:  l,
+		}
+		if err := n.Notify(a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
