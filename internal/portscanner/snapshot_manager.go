@@ -6,75 +6,83 @@ import (
 	"time"
 )
 
-// SnapshotManagerOptions configures periodic snapshot behaviour.
+// SnapshotManagerOptions configures the snapshot manager behaviour.
 type SnapshotManagerOptions struct {
+	Dir      string
 	Interval time.Duration
-	MaxAge   time.Duration
+	MaxFiles int
 	Logger   *log.Logger
 }
 
 // DefaultSnapshotManagerOptions returns sensible defaults.
-func DefaultSnapshotManagerOptions() SnapshotManagerOptions {
+func DefaultSnapshotManagerOptions(dir string) SnapshotManagerOptions {
 	return SnapshotManagerOptions{
-		Interval: 5 * time.Minute,
-		MaxAge:   7 * 24 * time.Hour,
+		Dir:      dir,
+		Interval: 60 * time.Second,
+		MaxFiles: 48,
+		Logger:   log.Default(),
 	}
 }
 
-// SnapshotManager periodically captures listener snapshots and stores them.
+// SnapshotManager periodically captures port snapshots, persists them, and
+// emits a DiffResult whenever the listener set changes.
 type SnapshotManager struct {
-	store   *HistoryStore
-	filter  FilterOptions
 	opts    SnapshotManagerOptions
-	logger  *log.Logger
+	history *HistoryStore
+	Diffs   chan DiffResult
 }
 
-// NewSnapshotManager creates a SnapshotManager writing to store.
-func NewSnapshotManager(store *HistoryStore, filter FilterOptions, opts SnapshotManagerOptions) *SnapshotManager {
-	logger := opts.Logger
-	if logger == nil {
-		logger = log.Default()
+// NewSnapshotManager creates a SnapshotManager using the provided options.
+func NewSnapshotManager(opts SnapshotManagerOptions) (*SnapshotManager, error) {
+	hs, err := NewHistoryStore(opts.Dir, opts.MaxFiles)
+	if err != nil {
+		return nil, err
 	}
 	return &SnapshotManager{
-		store:  store,
-		filter: filter,
-		opts:   opts,
-		logger: logger,
-	}
+		opts:    opts,
+		history: hs,
+		Diffs:   make(chan DiffResult, 8),
+	}, nil
 }
 
-// Run captures snapshots on the configured interval until ctx is cancelled.
-func (m *SnapshotManager) Run(ctx context.Context) error {
-	ticker := time.NewTicker(m.opts.Interval)
+// Run starts the periodic snapshot loop. It blocks until ctx is cancelled.
+func (sm *SnapshotManager) Run(ctx context.Context) {
+	sm.opts.Logger.Printf("snapshot manager started (interval=%s)", sm.opts.Interval)
+	ticker := time.NewTicker(sm.opts.Interval)
 	defer ticker.Stop()
+	defer close(sm.Diffs)
+
 	for {
 		select {
 		case <-ctx.Done():
-			m.logger.Println("snapshot manager: stopping")
-			return ctx.Err()
+			sm.opts.Logger.Println("snapshot manager stopped")
+			return
 		case <-ticker.C:
-			if err := m.capture(); err != nil {
-				m.logger.Printf("snapshot manager: capture error: %v", err)
-			}
-			if m.opts.MaxAge > 0 {
-				if err := m.store.Prune(m.opts.MaxAge); err != nil {
-					m.logger.Printf("snapshot manager: prune error: %v", err)
-				}
-			}
+			sm.tick()
 		}
 	}
 }
 
-func (m *SnapshotManager) capture() error {
+func (sm *SnapshotManager) tick() {
 	listeners, err := ScanListeners()
 	if err != nil {
-		return err
+		sm.opts.Logger.Printf("snapshot scan error: %v", err)
+		return
 	}
-	filtered := m.filter.Apply(listeners)
-	snap := NewSnapshot(filtered)
-	if err := m.store.Save(snap); err != nil {
-		return err
+
+	curr := NewSnapshot(listeners)
+
+	if prev, err := sm.history.Latest(); err == nil {
+		if diff := DiffSnapshots(prev, curr); !diff.IsEmpty() {
+			sm.opts.Logger.Printf("snapshot diff: %s", diff.Summary())
+			select {
+			case sm.Diffs <- diff:
+			default:
+			}
+		}
 	}
-	m.logger.Printf("snapshot manager: saved snapshot with %d listeners", len(filtered))
-	return nil
+
+	if err := sm.history.Save(curr); err != nil {
+		sm.opts.Logger.Printf("snapshot save error: %v", err)
+	}
 }
