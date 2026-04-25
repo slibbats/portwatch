@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +67,20 @@ func TestDaemon_Run_LogsStartAndStop(t *testing.T) {
 	output := buf.String()
 	if len(output) == 0 {
 		t.Error("expected log output, got none")
+	}
+}
+
+func TestDaemon_Run_LogsStartMessage(t *testing.T) {
+	var buf bytes.Buffer
+	d := newTestDaemon(&buf)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+
+	_ = d.Run(ctx)
+
+	output := buf.String()
+	if !strings.Contains(output, "start") && !strings.Contains(output, "Start") {
+		t.Errorf("expected log output to mention start, got: %q", output)
 	}
 }
