@@ -1,47 +1,53 @@
 package main
 
 import (
-	"context"
-	"flag"
 	"fmt"
-	"log"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"github.com/user/portwatch/internal/alerting"
-	"github.com/user/portwatch/internal/daemon"
 )
 
 func main() {
-	interval := flag.Duration("interval", 5*time.Second, "how often to scan for port changes")
-	configPath := flag.String("config", "", "path to config file (optional)")
-	flag.Parse()
-
-	logger := log.New(os.Stdout, "[portwatch] ", log.LstdFlags)
-
-	var cfg alerting.Config
-	var err error
-
-	if *configPath != "" {
-		cfg, err = alerting.LoadConfig(*configPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		cfg = alerting.DefaultConfig()
-	}
-
-	alerter := alerting.NewAlerter(cfg, os.Stdout)
-	d := daemon.New(alerter, *interval, logger)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	if err := d.Run(ctx); err != nil && err != context.Canceled {
-		fmt.Fprintf(os.Stderr, "daemon exited with error: %v\n", err)
+	if len(os.Args) < 2 {
+		printUsage()
 		os.Exit(1)
 	}
+
+	subcmd := os.Args[1]
+	args := os.Args[2:]
+
+	var err error
+	switch subcmd {
+	case "export":
+		err = runExport(args)
+	case "summary":
+		err = runSummary(args)
+	case "report":
+		err = runReport(args)
+	case "help", "--help", "-h":
+		printUsage()
+		os.Exit(0)
+	default:
+		fmt.Fprintf(os.Stderr, "portwatch: unknown command %q\n", subcmd)
+		printUsage()
+		os.Exit(1)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "portwatch %s: %v\n", subcmd, err)
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Fprintln(os.Stderr, `portwatch — monitor port usage and alert on unexpected listeners
+
+Usage:
+  portwatch <command> [flags]
+
+Commands:
+  export     Export a snapshot to JSON or CSV
+  summary    Print a summary of the latest snapshot
+  report     Print a detailed port listener report
+  help       Show this help message
+
+Run 'portwatch <command> --help' for command-specific flags.`)
 }
