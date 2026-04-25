@@ -74,3 +74,16 @@ func (a *Alerter) emit(alert Alert) {
 		alert.Message,
 	)
 }
+
+// AddAllowed adds a port to the allowlist at runtime, suppressing future
+// alerts for that port. This is useful for dynamically whitelisting ports
+// discovered to be intentional after initial deployment.
+func (a *Alerter) AddAllowed(port uint16) {
+	a.allowlist[port] = struct{}{}
+}
+
+// RemoveAllowed removes a port from the allowlist, causing future scans
+// to alert if that port is found listening.
+func (a *Alerter) RemoveAllowed(port uint16) {
+	delete(a.allowlist, port)
+}
