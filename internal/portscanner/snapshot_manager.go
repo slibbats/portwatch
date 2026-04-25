@@ -46,11 +46,16 @@ func NewSnapshotManager(opts SnapshotManagerOptions) (*SnapshotManager, error) {
 }
 
 // Run starts the periodic snapshot loop. It blocks until ctx is cancelled.
+// An initial snapshot is taken immediately on startup before the first tick,
+// so that a baseline exists for diffing as soon as the first interval elapses.
 func (sm *SnapshotManager) Run(ctx context.Context) {
 	sm.opts.Logger.Printf("snapshot manager started (interval=%s)", sm.opts.Interval)
 	ticker := time.NewTicker(sm.opts.Interval)
 	defer ticker.Stop()
 	defer close(sm.Diffs)
+
+	// Capture an initial baseline snapshot so the first diff is meaningful.
+	sm.takeBaseline()
 
 	for {
 		select {
@@ -60,6 +65,23 @@ func (sm *SnapshotManager) Run(ctx context.Context) {
 		case <-ticker.C:
 			sm.tick()
 		}
+	}
+}
+
+// takeBaseline captures and persists the current listener state only when no
+// prior snapshot exists, avoiding spurious diffs on restart.
+func (sm *SnapshotManager) takeBaseline() {
+	if _, err := sm.history.Latest(); err == nil {
+		// A previous snapshot already exists; skip baseline capture.
+		return
+	}
+	listeners, err := ScanListeners()
+	if err != nil {
+		sm.opts.Logger.Printf("baseline scan error: %v", err)
+		return
+	}
+	if err := sm.history.Save(NewSnapshot(listeners)); err != nil {
+		sm.opts.Logger.Printf("baseline save error: %v", err)
 	}
 }
 
