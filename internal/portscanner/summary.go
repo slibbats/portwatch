@@ -7,69 +7,79 @@ import (
 	"sort"
 )
 
-// Summary holds aggregate statistics about a set of listeners.
+// Summary holds aggregated statistics about a set of listeners.
 type Summary struct {
-	Total       int
-	TCPCount    int
-	UDPCount    int
-	Loopback    int
-	Public      int
-	TopPorts    []uint16
+	TotalCount      int
+	TCPCount        int
+	UDPCount        int
+	UniqueProcesses int
+	TopProcesses    []ProcessCount
 }
 
-// Summarize computes aggregate statistics from a list of listeners.
-func Summarize(listeners []Listener) Summary {
-	s := Summary{Total: len(listeners)}
+// ProcessCount pairs a process name with how many ports it holds open.
+type ProcessCount struct {
+	Process string
+	Count   int
+}
 
-	portFreq := make(map[uint16]int)
+// Summarize computes a Summary from a slice of Listener values.
+func Summarize(listeners []Listener) Summary {
+	processCounts := make(map[string]int)
+	var tcpCount, udpCount int
+
 	for _, l := range listeners {
 		switch l.Protocol {
 		case "tcp", "tcp6":
-			s.TCPCount++
+			tcpCount++
 		case "udp", "udp6":
-			s.UDPCount++
+			udpCount++
 		}
-		if isLoopback(l.Address) {
-			s.Loopback++
-		} else {
-			s.Public++
+		name := l.Process
+		if name == "" {
+			name = "unknown"
 		}
-		portFreq[l.Port]++
+		processCounts[name]++
 	}
 
-	type portCount struct {
-		port  uint16
-		count int
+	top := make([]ProcessCount, 0, len(processCounts))
+	for proc, cnt := range processCounts {
+		top = append(top, ProcessCount{Process: proc, Count: cnt})
 	}
-	var ranked []portCount
-	for p, c := range portFreq {
-		ranked = append(ranked, portCount{p, c})
-	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].count != ranked[j].count {
-			return ranked[i].count > ranked[j].count
+	sort.Slice(top, func(i, j int) bool {
+		if top[i].Count != top[j].Count {
+			return top[i].Count > top[j].Count
 		}
-		return ranked[i].port < ranked[j].port
+		return top[i].Process < top[j].Process
 	})
 
-	max := 5
-	if len(ranked) < max {
-		max = len(ranked)
+	return Summary{
+		TotalCount:      len(listeners),
+		TCPCount:        tcpCount,
+		UDPCount:        udpCount,
+		UniqueProcesses: len(processCounts),
+		TopProcesses:    top,
 	}
-	for i := 0; i < max; i++ {
-		s.TopPorts = append(s.TopPorts, ranked[i].port)
-	}
-	return s
 }
 
-// PrintSummary writes a human-readable summary to w (defaults to stdout).
-func PrintSummary(s Summary, w io.Writer) {
+// PrintSummary writes a human-readable summary of listeners to w.
+// If w is nil, output goes to os.Stdout.
+func PrintSummary(listeners []Listener, w io.Writer) {
 	if w == nil {
 		w = os.Stdout
 	}
-	fmt.Fprintf(w, "Listeners : %d (TCP: %d, UDP: %d)\n", s.Total, s.TCPCount, s.UDPCount)
-	fmt.Fprintf(w, "Loopback  : %d  Public: %d\n", s.Loopback, s.Public)
-	if len(s.TopPorts) > 0 {
-		fmt.Fprintf(w, "Top Ports : %v\n", s.TopPorts)
+
+	s := Summarize(listeners)
+
+	fmt.Fprintf(w, "=== Listener Summary ===\n")
+	fmt.Fprintf(w, "Total listeners : %d\n", s.TotalCount)
+	fmt.Fprintf(w, "TCP             : %d\n", s.TCPCount)
+	fmt.Fprintf(w, "UDP             : %d\n", s.UDPCount)
+	fmt.Fprintf(w, "Unique Process  : %d\n", s.UniqueProcesses)
+
+	if len(s.TopProcesses) > 0 {
+		fmt.Fprintf(w, "\nProcess breakdown:\n")
+		for _, pc := range s.TopProcesses {
+			fmt.Fprintf(w, "  %-20s %d\n", pc.Process, pc.Count)
+		}
 	}
 }
