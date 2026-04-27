@@ -44,6 +44,27 @@ func TestNotifier_Notify_WritesFormattedAlert(t *testing.T) {
 	}
 }
 
+func TestNotifier_Notify_IncludesTimestamp(t *testing.T) {
+	var buf bytes.Buffer
+	n := NewNotifier(&buf)
+
+	a := Alert{
+		Timestamp: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
+		Severity:  SeverityWarning,
+		Message:   "unexpected new listener detected",
+		Listener:  makeTestListener(8080, 1234),
+	}
+
+	if err := n.Notify(a); err != nil {
+		t.Fatalf("Notify returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "2024") {
+		t.Errorf("expected timestamp year 2024 in output, got: %s", out)
+	}
+}
+
 func TestNotifier_NotifyNew_EmitsOneLinePerListener(t *testing.T) {
 	var buf bytes.Buffer
 	n := NewNotifier(&buf)
