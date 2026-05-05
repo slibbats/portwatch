@@ -91,6 +91,21 @@ func (s *ExpiryStore) All() []ExpiryEntry {
 	return out
 }
 
+// PurgeExpired removes all expired entries from the store and saves it.
+// It returns the list of entries that were removed.
+func (s *ExpiryStore) PurgeExpired() ([]ExpiryEntry, error) {
+	expired := s.Expired()
+	for _, e := range expired {
+		delete(s.entries, expiryKey(e.Port, e.Proto))
+	}
+	if len(expired) > 0 {
+		if err := s.save(); err != nil {
+			return nil, fmt.Errorf("purge expired: %w", err)
+		}
+	}
+	return expired, nil
+}
+
 func (s *ExpiryStore) save() error {
 	data, err := json.MarshalIndent(s.entries, "", "  ")
 	if err != nil {
